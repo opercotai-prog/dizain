@@ -5,136 +5,106 @@ import os
 from PIL import Image
 import io
 
-# --- КОНФИГУРАЦИЯ ---
-st.set_page_config(page_title="AI Room Designer", layout="wide", initial_sidebar_state="collapsed")
+# --- НАСТРОЙКИ ---
+st.set_page_config(page_title="Gemini 2.0 Design Studio", layout="wide")
 
-# Стиль для кнопок и карточек
-st.markdown("""
-    <style>
-    .main { background-color: #f5f7f9; }
-    .stButton>button { width: 100%; border-radius: 10px; height: 3em; background-color: #4CAF50; color: white; }
-    .cost-card { background-color: white; padding: 20px; border-radius: 15px; border-left: 5px solid #4CAF50; box-shadow: 2px 2px 10px rgba(0,0,0,0.1); }
-    </style>
-    """, unsafe_allow_html=True)
-
-# Получение API ключа из секретов Streamlit или ввода
+# Подключаем API Ключ
 GEMINI_KEY = st.secrets.get("GEMINI_KEY") or os.environ.get("GEMINI_KEY")
-if not GEMINI_KEY:
-    GEMINI_KEY = st.sidebar.text_input("Введите Gemini API Key", type="password")
 
 if GEMINI_KEY:
     genai.configure(api_key=GEMINI_KEY)
 else:
-    st.warning("Пожалуйста, добавьте API Ключ в настройках (Sidebar или Secrets).")
+    st.error("Добавьте GEMINI_KEY в Secrets!")
+    st.stop()
 
-# --- ФУНКЦИЯ ОБРАБОТКИ (Nano Banana) ---
-def process_design(user_image, user_prompt):
-    # Используем новейшую модель 2.5 Flash Image
-    model = genai.GenerativeModel('models/gemini-2.5-flash-image-preview')
+# --- ФУНКЦИЯ ОБРАБОТКИ ---
+def generate_design_all_in_one(user_img, user_query):
+    # Используем флагманскую мультимодальную модель 2.0
+    model = genai.GenerativeModel("gemini-2.0-flash")
     
-    # Системный промпт для модели
-    system_instruction = """
-    Ты — профессиональный ИИ-дизайнер и сметчик. 
-    Твоя задача: на основе входящего фото или описания создать новый дизайн интерьера.
+    prompt = f"""
+    Ты — профессиональный ИИ-дизайнер. 
+    1. Проанализируй приложенное фото и запрос пользователя: "{user_query}".
+    2. Создай новый дизайн интерьера.
+    3. В ответе выдай ДВЕ ВЕЩИ:
+       - Текстовый блок в формате JSON со сметой и описанием.
+       - Сгенерируй реалистичное изображение (фото) этого нового дизайна.
     
-    ТРЕБОВАНИЯ:
-    1. Если есть фото: СОХРАНИ архитектуру (окна, двери), но измени отделку и мебель.
-    2. В ответе выдай СТРОГО JSON-объект и описание для генерации изображения.
-    
-    JSON формат:
-    {
-      "analysis": "краткое описание концепции",
-      "total_estimate": "общая сумма цифрой",
-      "items": [
-        {"name": "предмет мебели/декора", "price": "ориентировочная цена", "reason": "почему это здесь"}
-      ],
-      "visual_prompt": "A professional 8k interior design photo, transformation of the provided room, [USER_PROMPT], highly realistic, architecture preserved"
-    }
+    JSON format:
+    {{
+      "concept": "краткое описание",
+      "total_price": "сумма в рублях",
+      "shopping_list": [
+        {{"item": "название", "price": "цена"}}
+      ]
+    }}
     """
     
-    # Собираем части запроса
-    content_parts = [system_instruction, f"Запрос пользователя: {user_prompt}"]
-    if user_image:
-        content_parts.append(user_image)
-    
-    # 1. Получаем текстовый анализ и JSON
-    response = model.generate_content(content_parts)
+    # Собираем запрос (текст + фото пользователя, если есть)
+    request_content = [prompt]
+    if user_img:
+        request_content.append(user_img)
     
     try:
-        # Очистка JSON от возможных знаков разметки
-        clean_text = response.text.replace('```json', '').replace('```', '').strip()
-        data = json.loads(clean_text)
+        # Мощный мультимодальный запрос
+        response = model.generate_content(request_content)
         
-        # 2. Генерируем изображение по полученному визуальному промпту
-        # (В режиме preview Nano Banana генерирует изображение в этом же или отдельном вызове)
-        # Для текущего SDK используем генерацию через тот же промпт
-        generated_image = model.generate_content([data['visual_prompt']])
-        
-        return data, generated_image
-    except Exception as e:
-        st.error(f"Ошибка парсинга ответа: {e}")
-        return None, None
+        res_data = {
+            "json": None,
+            "image": None
+        }
 
-# --- ИНТЕРФЕЙС САЙТА ---
-st.title("🏠 Умный Дизайн и Смета")
-st.write("Загрузите фото вашей комнаты или просто напишите, что хотите изменить.")
-
-col_input, col_output = st.columns([1, 1.2], gap="large")
-
-with col_input:
-    st.subheader("📝 Запрос")
-    uploaded_file = st.file_uploader("Загрузите фото (JPG/PNG)", type=["jpg", "jpeg", "png"])
-    
-    if uploaded_file:
-        st.image(uploaded_file, caption="Ваше текущее помещение", use_container_width=True)
-    
-    prompt = st.text_area("Ваши пожелания:", placeholder="Например: Сделай из этой кухни уютный лофт с кирпичными стенами и деревянным столом. Бюджет 300 000 рублей.")
-    
-    generate_btn = st.button("🚀 Создать дизайн-проект")
-
-with col_output:
-    if generate_btn:
-        if not GEMINI_KEY:
-            st.error("Отсутствует API Ключ!")
-        else:
-            with st.spinner("Nano Banana анализирует пространство и рисует..."):
-                img_input = Image.open(uploaded_file) if uploaded_file else None
-                data, result_img = process_design(img_input, prompt)
+        # Разбираем мультимодальный ответ
+        for part in response.candidates[0].content.parts:
+            # Если часть ответа - это текст (наш JSON)
+            if part.text:
+                import re
+                json_match = re.search(r'\{.*\}', part.text, re.DOTALL)
+                if json_match:
+                    res_data["json"] = json.loads(json_match.group())
+            
+            # Если часть ответа - это изображение (inline_data)
+            if part.inline_data:
+                img_bytes = part.inline_data.data
+                res_data["image"] = Image.open(io.BytesIO(img_bytes))
                 
-                if data:
-                    st.subheader("🖼 Визуализация нового дизайна")
-                    # Отображаем сгенерированное изображение (заглушка на случай если API вернет ссылку/объект)
-                    # В Gemini 2.5 Flash Image результат может быть в .parts[0].inline_data
-                    try:
-                        st.image(f"https://pollinations.ai/p/{data['visual_prompt'].replace(' ', '_')}?width=1024&height=768&seed=42", caption="Предложенный вариант")
-                    except:
-                        st.info("Визуализация генерируется...")
+        return res_data
+    except Exception as e:
+        st.error(f"Ошибка модели 2.0: {e}")
+        return None
 
-                    st.markdown(f"""
-                    <div class="cost-card">
-                        <h3>💰 Примерная смета: {data['total_estimate']} ₽</h3>
-                        <p><b>Концепция:</b> {data['analysis']}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
+# --- ИНТЕРФЕЙС ---
+st.title("⚡ Gemini 2.0 Native Design Service")
+st.write("Генерация интерьера и расчет сметы одной нейросетью")
 
-                    st.write("### 🛒 Предметы интерьера и где их найти:")
-                    for item in data['items']:
-                        # Создаем ссылки на поиск
-                        search_q = f"{item['name']} купить".replace(" ", "+")
-                        google_url = f"https://www.google.com/search?q={search_q}"
-                        yandex_url = f"https://yandex.ru/search/?text={search_q}"
-                        
-                        with st.expander(f"📍 {item['name']} — {item['price']} ₽"):
-                            st.write(f"**Зачем:** {item['reason']}")
-                            st.markdown(f"[Найти в Google]({google_url}) | [Найти в Яндексе]({yandex_url})")
+col1, col2 = st.columns([1, 1.2])
+
+with col1:
+    uploaded_file = st.file_uploader("Загрузите фото комнаты", type=["jpg", "png"])
+    user_text = st.text_area("Что вы хотите изменить?", "Сделай современную ванную в стиле спа")
+    submit = st.button("🚀 Создать проект")
+
+if submit:
+    with st.spinner("Gemini 2.0 генерирует текст и изображение..."):
+        input_img = Image.open(uploaded_file) if uploaded_file else None
+        result = generate_design_all_in_one(input_img, user_text)
+        
+        if result:
+            with col2:
+                # Показываем СГЕНЕРИРОВАННОЕ изображение
+                if result["image"]:
+                    st.subheader("🖼 Визуализация от Gemini 2.0")
+                    st.image(result["image"], use_container_width=True)
                 else:
-                    st.error("Не удалось получить данные от ИИ. Попробуйте изменить запрос.")
-
-# --- ИНФОРМАЦИЯ ---
-st.sidebar.markdown(f"""
----
-**О сервисе:**
-- Модель: Gemini 2.5 Flash (Nano Banana)
-- Лимит: 500 запросов/день бесплатно
-- Сохраняет архитектуру вашего помещения
-""")
+                    st.warning("Изображение не было сгенерировано. Попробуйте еще раз.")
+                
+                # Показываем JSON данные
+                if result["json"]:
+                    data = result["json"]
+                    st.success(f"### Общая смета: {data.get('total_price')} ₽")
+                    st.write(f"**Концепция:** {data.get('concept')}")
+                    
+                    st.write("### Список предметов:")
+                    for item in data.get('shopping_list', []):
+                        search_url = f"https://www.google.com/search?q=купить+{item['item'].replace(' ', '+')}"
+                        st.markdown(f"- **[{item['item']}]({search_url})** — {item['price']} ₽")
