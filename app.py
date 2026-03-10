@@ -28,7 +28,7 @@ with col1:
 
 # --- ЛОГИКА ---
 def get_design_analysis(image, text):
-    model = genai.GenerativeModel('models/gemini-2.5-flash:generateContent')
+    model = genai.GenerativeModel('models/gemini-2.5-flash')
     
     prompt = f"""
     Ты эксперт по дизайну интерьера. Проанализируй запрос: "{text}".
